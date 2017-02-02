@@ -64,7 +64,7 @@
 (defn run-query-for-card-with-id
   "Run the query belonging to Card with CARD-ID with PARAMETERS and other query options (e.g. `:constraints`)."
   [card-id parameters & options]
-  (-> (let [parameters (json/parse-string parameters keyword)]
+  (-> (let [parameters (if (string? parameters) (json/parse-string parameters keyword) parameters)]
         (binding [api/*current-user-permissions-set*     (atom #{"/"})
                   qp/*allow-queries-with-no-executor-id* true]
           (apply card-api/run-query-for-card card-id, :parameters parameters, options)))

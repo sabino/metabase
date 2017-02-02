@@ -66,7 +66,7 @@ export const EmbedApi = {
     card:                        GET("/api/embed/card/:token"),
     cardQuery:                   GET("/api/embed/card/:token/query"),
     dashboard:                   GET("/api/embed/dashboard/:token"),
-    dashboardCardQuery:          GET("/api/embed/dashboard/:token/card/:cardId")
+    dashboardCardQuery:          GET("/api/embed/dashboard/:token/dashcard/:dashcardId/card/:cardId")
 };
 
 export const EmailApi = {

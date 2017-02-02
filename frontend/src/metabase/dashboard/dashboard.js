@@ -4,20 +4,21 @@ import { assoc, dissoc, assocIn, getIn, chain } from "icepick";
 import _ from "underscore";
 import moment from "moment";
 
-import { createAction } from "redux-actions";
-import { handleActions, combineReducers, createThunkAction } from "metabase/lib/redux";
+import { handleActions, combineReducers, createAction, createThunkAction } from "metabase/lib/redux";
 import { normalize, schema } from "normalizr";
-
-import MetabaseAnalytics from "metabase/lib/analytics";
-import { getPositionForNewDashCard } from "metabase/lib/dashboard_grid";
 
 import { createParameter, setParameterName as setParamName, setParameterDefaultValue as setParamDefaultValue } from "metabase/meta/Dashboard";
 import { applyParameters } from "metabase/meta/Card";
-import { fetchDatabaseMetadata } from "metabase/redux/metadata";
-import Utils from "metabase/lib/utils";
+import { getParametersBySlug } from "metabase/meta/Parameter";
 
 import type { Dashboard, DashCard, DashCardId } from "metabase/meta/types/Dashboard";
 import type { Card, CardId } from "metabase/meta/types/Card";
+
+import Utils from "metabase/lib/utils";
+import MetabaseAnalytics from "metabase/lib/analytics";
+import { getPositionForNewDashCard } from "metabase/lib/dashboard_grid";
+
+import { fetchDatabaseMetadata } from "metabase/redux/metadata";
 
 import { DashboardApi, MetabaseApi, CardApi, RevisionApi, PublicApi, EmbedApi } from "metabase/services";
 
@@ -225,8 +226,9 @@ export const fetchCardData = createThunkAction(FETCH_CARD_DATA, function(card, d
         } else if (dashboardType === "embed") {
             result = await fetchDataOrError(EmbedApi.dashboardCardQuery({
                 token: dashcard.dashboard_id,
+                dashcardId: dashcard.id,
                 cardId: card.id,
-                parameters: datasetQuery.parameters ? JSON.stringify(datasetQuery.parameters) : undefined
+                ...getParametersBySlug(dashboard.parameters, parameterValues)
             }));
         } else {
             result = await fetchDataOrError(CardApi.query({cardId: card.id, parameters: datasetQuery.parameters}));

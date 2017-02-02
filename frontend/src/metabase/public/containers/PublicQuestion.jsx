@@ -9,7 +9,8 @@ import LoadingAndErrorWrapper from "metabase/components/LoadingAndErrorWrapper";
 import ExplicitSize from "metabase/components/ExplicitSize";
 import EmbedFrame from "../components/EmbedFrame";
 
-import { getParameters, applyParameters } from "metabase/meta/Card";
+import { getParametersBySlug } from "metabase/meta/Parameter";
+
 import type { Card } from "metabase/meta/types/Card";
 import type { Dataset } from "metabase/meta/types/Dataset";
 
@@ -69,9 +70,8 @@ export default class PublicQuestion extends Component<*, Props, State> {
         try {
             let card = await Api(params).card(params);
 
-            let parameters = getParameters(card);
             let parameterValues = {};
-            for (let parameter of parameters) {
+            for (let parameter of card.parameters) {
                 parameterValues[parameter.id] = query[parameter.slug];
             }
 
@@ -99,13 +99,10 @@ export default class PublicQuestion extends Component<*, Props, State> {
             return;
         }
 
-        const parameters = getParameters(card);
-        const datasetQuery = applyParameters(card, parameters, parameterValues);
-
         try {
             const newResult = await Api(params).cardQuery({
                 ...params,
-                parameters: JSON.stringify(datasetQuery.parameters)
+                ...getParametersBySlug(card.parameters, parameterValues)
             });
 
             this.setState({ result: newResult });
@@ -133,8 +130,8 @@ export default class PublicQuestion extends Component<*, Props, State> {
                 className="relative spread"
                 name={card && card.name}
                 description={card && card.description}
+                parameters={card && card.parameters}
                 actionButtons={actionButtons}
-                parameters={getParameters(card)}
                 parameterValues={parameterValues}
                 setParameterValue={this.setParameterValue}
             >

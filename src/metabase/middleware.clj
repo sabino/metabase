@@ -37,6 +37,11 @@
   [{:keys [uri]}]
   (re-matches #"^/public/.*$" uri))
 
+(defn- embed?
+  "Is this ring request one that will serve `public.html`?"
+  [{:keys [uri]}]
+  (re-matches #"^/embed/.*$" uri))
+
 ;;; # ------------------------------------------------------------ AUTH & SESSION MANAGEMENT ------------------------------------------------------------
 
 (def ^:private ^:const ^String metabase-session-cookie "metabase.SESSION_ID")
@@ -240,6 +245,7 @@
       (update response :headers merge (cond
                                         (api-call? request) (api-security-headers)
                                         (public? request)   (html-page-security-headers, :allow-iframes? true)
+                                        (embed? request)    (html-page-security-headers, :allow-iframes? true)
                                         (index? request)    (html-page-security-headers))))))
 
 

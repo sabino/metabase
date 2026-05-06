@@ -25,6 +25,18 @@
                                        llm-anthropic-api-key "sk-ant-test"]
       (is (true? (metabot.settings/llm-metabot-configured?))))))
 
+(deftest metabot-configured-with-openai-compatible-provider-test
+  (testing "returns true when OpenAI-compatible provider has API key and base URL set"
+    (mt/with-temporary-setting-values [llm-metabot-provider                  "openai-compatible/custom-model"
+                                       llm-openai-compatible-api-key         "custom-key"
+                                       llm-openai-compatible-api-base-url    "https://llm.example.com/v1"]
+      (is (true? (metabot.settings/llm-metabot-configured?)))))
+  (testing "returns false when OpenAI-compatible provider is missing its base URL"
+    (mt/with-temporary-setting-values [llm-metabot-provider               "openai-compatible/custom-model"
+                                       llm-openai-compatible-api-key      "custom-key"
+                                       llm-openai-compatible-api-base-url nil]
+      (is (false? (metabot.settings/llm-metabot-configured?))))))
+
 (deftest metabot-configured-with-direct-provider-no-api-key-test
   (testing "returns false when direct provider has no API key"
     (with-redefs [llm.settings/llm-anthropic-api-key (constantly nil)]
@@ -105,6 +117,11 @@
   (testing "accepts valid direct openai provider string"
     (mt/with-temporary-setting-values [llm-metabot-provider "openai/gpt-4.1-mini"]
       (is (= "openai/gpt-4.1-mini" (metabot.settings/llm-metabot-provider))))))
+
+(deftest validate-metabot-provider-accepts-valid-direct-openai-compatible-test
+  (testing "accepts valid direct OpenAI-compatible provider string"
+    (mt/with-temporary-setting-values [llm-metabot-provider "openai-compatible/custom-model"]
+      (is (= "openai-compatible/custom-model" (metabot.settings/llm-metabot-provider))))))
 
 (deftest validate-metabot-provider-accepts-valid-direct-openrouter-test
   (testing "accepts valid direct openrouter provider string"

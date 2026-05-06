@@ -216,6 +216,7 @@ export function MetabotSetupInner({
   const { details: providerApiKeyDetails } = useAdminSettings([
     "llm-anthropic-api-key",
     "llm-openai-api-key",
+    "llm-openai-compatible-api-key",
     "llm-openrouter-api-key",
   ] as const);
 
@@ -457,6 +458,12 @@ const AIProviderSetup = ({
 }) => {
   const [model, setModel] = useState<string | undefined>(connectedModel);
   const [apiKeyLocalValue, setApiKeyLocalValue] = useState<string | null>(null);
+  const [apiBaseUrlLocalValue, setApiBaseUrlLocalValue] = useState<
+    string | null
+  >(null);
+  const [customModelLocalValue, setCustomModelLocalValue] = useState<
+    string | null
+  >(null);
   const [sendToast] = useToast();
 
   useEffect(() => {
@@ -466,37 +473,73 @@ const AIProviderSetup = ({
   const [updateMetabotSettings, updateMetabotSettingsResult] =
     useUpdateMetabotSettingsMutation();
 
-  const onConnect = async () => {
-    await updateMetabotSettings({
-      provider: selectedProvider,
-      "api-key": apiKeyLocalValue || null,
-    }).unwrap();
-
-    setApiKeyLocalValue(null);
-  };
-
-  const hasDirtyApiKey = apiKeyLocalValue !== null;
-  const connectHandler =
-    !isCurrentConfigured || hasDirtyApiKey ? onConnect : null;
-
-  const { isLoading } = useMetabotSetupContext(connectHandler);
-
+  const isOpenAICompatible = selectedProvider === "openai-compatible";
   const { details: providerApiKeyDetails } = useAdminSettings([
     "llm-anthropic-api-key",
     "llm-openai-api-key",
+    "llm-openai-compatible-api-key",
     "llm-openrouter-api-key",
+  ] as const);
+  const { details: openaiCompatibleApiBaseUrlDetails } = useAdminSettings([
+    "llm-openai-compatible-api-base-url",
   ] as const);
 
   const selectedApiKeySetting =
     providerApiKeyDetails[API_KEY_SETTING_BY_PROVIDER[selectedProvider]];
   const selectedApiKeyValue = String(selectedApiKeySetting?.value ?? "");
   const needsApiKey = !hasConfiguredSettingValue(selectedApiKeySetting);
+  const openaiCompatibleApiBaseUrlSetting =
+    openaiCompatibleApiBaseUrlDetails["llm-openai-compatible-api-base-url"];
+  const selectedApiBaseUrlValue = String(
+    openaiCompatibleApiBaseUrlSetting?.value ?? "",
+  );
+  const displayApiBaseUrlValue =
+    apiBaseUrlLocalValue ?? selectedApiBaseUrlValue;
+  const displayCustomModelValue =
+    customModelLocalValue ?? (isOpenAICompatible ? (connectedModel ?? "") : "");
+  const displayApiKeyValue = apiKeyLocalValue ?? selectedApiKeyValue;
+  const hasDirtyApiKey = apiKeyLocalValue !== null;
+  const hasDirtyApiBaseUrl = apiBaseUrlLocalValue !== null;
+  const hasDirtyCustomModel = customModelLocalValue !== null;
+
+  const onConnect = async () => {
+    const update = {
+      provider: selectedProvider,
+      ...((hasDirtyApiKey || needsApiKey) && {
+        "api-key": apiKeyLocalValue || null,
+      }),
+      ...(isOpenAICompatible && {
+        "api-base-url": displayApiBaseUrlValue.trim(),
+        model: displayCustomModelValue.trim(),
+      }),
+    };
+
+    await updateMetabotSettings(update).unwrap();
+
+    setApiKeyLocalValue(null);
+    setApiBaseUrlLocalValue(null);
+    setCustomModelLocalValue(null);
+  };
+
+  const connectHandler =
+    (!isCurrentConfigured ||
+      hasDirtyApiKey ||
+      hasDirtyApiBaseUrl ||
+      hasDirtyCustomModel) &&
+    (!isOpenAICompatible ||
+      ((!needsApiKey || displayApiKeyValue.trim()) &&
+        displayApiBaseUrlValue.trim() &&
+        displayCustomModelValue.trim()))
+      ? onConnect
+      : null;
+
+  const { isLoading } = useMetabotSetupContext(connectHandler);
 
   const metabotSettingsQuery = useGetMetabotSettingsQuery(
     {
       provider: selectedProvider,
     },
-    { skip: needsApiKey },
+    { skip: needsApiKey || isOpenAICompatible },
   );
 
   const modelOptions = useMemo(
@@ -509,14 +552,27 @@ const AIProviderSetup = ({
     selectedProvider,
   );
 
-  const displayApiKeyValue = apiKeyLocalValue ?? selectedApiKeyValue;
-
   useEffect(() => {
     setApiKeyLocalValue(null);
-  }, [selectedProvider, selectedApiKeySetting?.value]);
+    setApiBaseUrlLocalValue(null);
+    setCustomModelLocalValue(null);
+  }, [
+    selectedProvider,
+    selectedApiKeySetting?.value,
+    openaiCompatibleApiBaseUrlSetting?.value,
+    connectedModel,
+  ]);
 
   const handleApiKeyChange = (event: ChangeEvent<HTMLInputElement>) => {
     setApiKeyLocalValue(event.target.value);
+  };
+
+  const handleApiBaseUrlChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setApiBaseUrlLocalValue(event.target.value);
+  };
+
+  const handleCustomModelChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setCustomModelLocalValue(event.target.value);
   };
 
   const handleModelChange = async (value: string) => {
@@ -546,28 +602,66 @@ const AIProviderSetup = ({
         label={t`API key`}
         type="password"
         description={
-          <ExternalLink
-            key={selectedProviderDetails.value}
-            href={selectedProviderDetails.apiKey.addKeyUrl}
-          >
-            {c("{0} is the name of an AI provider")
-              .t`Get or manage keys in ${selectedProviderDetails.label}`}
-          </ExternalLink>
+          selectedProviderDetails.apiKey.addKeyUrl ? (
+            <ExternalLink
+              key={selectedProviderDetails.value}
+              href={selectedProviderDetails.apiKey.addKeyUrl}
+            >
+              {c("{0} is the name of an AI provider")
+                .t`Get or manage keys in ${selectedProviderDetails.label}`}
+            </ExternalLink>
+          ) : undefined
         }
         placeholder={
           selectedProviderDetails.apiKey?.placeholder ?? t`Enter your API key`
         }
         value={displayApiKeyValue}
         onChange={handleApiKeyChange}
-        disabled={isLoading || isEnvSetting}
+        disabled={
+          isLoading || isEnvSetting || selectedApiKeySetting?.is_env_setting
+        }
         w="100%"
       />
 
-      {isEnvSetting && selectedApiKeySetting?.env_name ? (
+      {selectedApiKeySetting?.is_env_setting &&
+      selectedApiKeySetting.env_name ? (
         <SetByEnvVar varName={selectedApiKeySetting.env_name} />
       ) : null}
 
-      {!needsApiKey && (
+      {isOpenAICompatible && (
+        <>
+          <TextInput
+            label={t`Base URL`}
+            placeholder="https://api.example.com/v1"
+            description={t`Use the API root for an OpenAI-compatible Responses API endpoint.`}
+            value={displayApiBaseUrlValue}
+            onChange={handleApiBaseUrlChange}
+            disabled={
+              isLoading ||
+              isEnvSetting ||
+              openaiCompatibleApiBaseUrlSetting?.is_env_setting
+            }
+            w="100%"
+          />
+
+          {openaiCompatibleApiBaseUrlSetting?.is_env_setting &&
+          openaiCompatibleApiBaseUrlSetting.env_name ? (
+            <SetByEnvVar varName={openaiCompatibleApiBaseUrlSetting.env_name} />
+          ) : null}
+
+          <TextInput
+            label={t`Model`}
+            placeholder="gpt-4.1-mini"
+            description={t`Enter the model or deployment name exposed by this endpoint.`}
+            value={displayCustomModelValue}
+            onChange={handleCustomModelChange}
+            disabled={isLoading || isEnvSetting}
+            w="100%"
+          />
+        </>
+      )}
+
+      {!needsApiKey && !isOpenAICompatible && (
         <Select
           label={t`Model`}
           placeholder={

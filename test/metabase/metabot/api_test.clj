@@ -307,6 +307,32 @@
       (is (= "openai/gpt-4.1-mini"
              (metabot.settings/llm-metabot-provider))))))
 
+(deftest settings-put-updates-openai-compatible-provider-test
+  (mt/with-temporary-setting-values [metabot.settings/llm-metabot-provider           "anthropic/claude-haiku-4-5"
+                                     llm.settings/llm-openai-compatible-api-key      nil
+                                     llm.settings/llm-openai-compatible-api-base-url nil]
+    (with-redefs [metabot.self/list-models (fn [provider {:keys [api-key api-base-url]}]
+                                             (is (= "openai-compatible" provider))
+                                             (is (= "azure-key" api-key))
+                                             (is (= "https://resource.cognitiveservices.azure.com/openai/v1/" api-base-url))
+                                             (is (nil? (llm.settings/llm-openai-compatible-api-key))
+                                                 "verification should happen before saving the key")
+                                             {:models []})]
+      (is (= {:value        "openai-compatible/gpt-5-chat"
+              :api-base-url "https://resource.cognitiveservices.azure.com/openai/v1/"
+              :models       []}
+             (mt/user-http-request :crowberto :put 200 "metabot/settings"
+                                   {:provider     "openai-compatible"
+                                    :api-key      "azure-key"
+                                    :api-base-url "https://resource.cognitiveservices.azure.com/openai/v1/"
+                                    :model        "gpt-5-chat"})))
+      (is (= "openai-compatible/gpt-5-chat"
+             (metabot.settings/llm-metabot-provider)))
+      (is (= "azure-key"
+             (llm.settings/llm-openai-compatible-api-key)))
+      (is (= "https://resource.cognitiveservices.azure.com/openai/v1/"
+             (llm.settings/llm-openai-compatible-api-base-url))))))
+
 (deftest settings-put-updates-metabase-provider-without-api-key-test
   (mt/with-temporary-setting-values [metabot.settings/llm-metabot-provider "anthropic/claude-haiku-4-5"]
     (with-redefs [metabot.self/list-models (fn

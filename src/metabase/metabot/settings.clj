@@ -38,7 +38,7 @@
 
 (def ^:private direct-providers
   "Providers that can be used directly (not via the metabase/ proxy prefix)."
-  #{"anthropic" "openai" "openrouter"})
+  #{"anthropic" "openai" "openai-compatible" "openrouter"})
 
 (def ^:private default-anthropic-llm-metabot-model
   "Default Anthropic model used for Metabot when no explicit model is selected."
@@ -54,6 +54,7 @@
   Values match the shape expected in the request body for each provider: direct providers use a bare model ID, while the
   managed `metabase` provider uses the proxied `provider/model` form."
   {"anthropic"                       default-anthropic-llm-metabot-model
+   "openai-compatible"               "gpt-4.1-mini"
    provider-util/metabase-provider-prefix default-llm-metabot-provider})
 
 (def default-metabase-llm-metabot-provider
@@ -150,7 +151,7 @@
     (validate-direct-provider! value)))
 
 (defsetting llm-metabot-provider
-  (deferred-tru "The AI provider and model for Metabot. Format: provider/model-name, e.g. `anthropic/claude-haiku-4-5`, `openai/gpt-4.1-mini`, `openrouter/anthropic/claude-haiku-4-5`.")
+  (deferred-tru "The AI provider and model for Metabot. Format: provider/model-name, e.g. `anthropic/claude-haiku-4-5`, `openai/gpt-4.1-mini`, `openai-compatible/custom-model`, `openrouter/anthropic/claude-haiku-4-5`.")
   :type             :string
   :encryption       :no
   :default          default-llm-metabot-provider
@@ -172,9 +173,17 @@
   "Returns the configured API key for the given provider, or nil if unrecognized."
   [provider]
   (case provider
-    "anthropic"  (llm.settings/llm-anthropic-api-key)
-    "openai"     (llm.settings/llm-openai-api-key)
-    "openrouter" (llm.settings/llm-openrouter-api-key)
+    "anthropic"         (llm.settings/llm-anthropic-api-key)
+    "openai"            (llm.settings/llm-openai-api-key)
+    "openai-compatible" (llm.settings/llm-openai-compatible-api-key)
+    "openrouter"        (llm.settings/llm-openrouter-api-key)
+    nil))
+
+(defn configured-provider-api-base-url
+  "Returns the configured API base URL for the given provider, or nil if unrecognized."
+  [provider]
+  (case provider
+    "openai-compatible" (llm.settings/llm-openai-compatible-api-base-url)
     nil))
 
 (defn- llm-provider-configured?
@@ -185,10 +194,10 @@
   (boolean
    (if (provider-util/metabase-provider? provider-and-model)
      (some? (llm.settings/llm-proxy-base-url))
-     (some-> provider-and-model
-             provider-util/provider-and-model->provider
-             configured-provider-api-key
-             token-configured?))))
+     (let [provider (provider-util/provider-and-model->provider provider-and-model)]
+       (and (some-> provider configured-provider-api-key token-configured?)
+            (or (not= provider "openai-compatible")
+                (some-> provider configured-provider-api-base-url token-configured?)))))))
 
 (defsetting llm-metabot-configured?
   "Whether the API key for the selected Metabot provider is configured."

@@ -98,6 +98,23 @@
                              (deferred-tru "Invalid OpenAI API key format. Key must start with ''sk-''."))
   :doc              false)
 
+;;; ------------------------------------------- OpenAI-compatible APIs --------------------------------------------
+
+(defsetting llm-openai-compatible-api-base-url
+  (deferred-tru "The OpenAI-compatible API base URL.")
+  :encryption       :no
+  :visibility       :settings-manager
+  :default          nil
+  :export?          false
+  :doc              false)
+
+(defsetting llm-openai-compatible-api-key
+  (deferred-tru "The OpenAI-compatible API key.")
+  :sensitive?       true
+  :visibility       :settings-manager
+  :export?          false
+  :doc              false)
+
 ;;; ------------------------------------------------- OpenRouter ------------------------------------------------
 
 (defsetting llm-openrouter-api-base-url

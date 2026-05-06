@@ -68,6 +68,10 @@ const DEFAULT_RESPONSES: Record<MetabotProvider, MetabotSettingsResponse> = {
       { id: "gpt-4.1", display_name: "GPT-4.1" },
     ],
   },
+  "openai-compatible": {
+    value: "openai-compatible/gpt-4.1-mini",
+    models: [],
+  },
   openrouter: {
     value: "openrouter/openai/gpt-4.1-mini",
     models: [
@@ -95,12 +99,15 @@ type MetabotSettingKey =
   | "llm-metabot-provider"
   | "llm-anthropic-api-key"
   | "llm-openai-api-key"
+  | "llm-openai-compatible-api-key"
+  | "llm-openai-compatible-api-base-url"
   | "llm-openrouter-api-key";
 
 type MetabotSettingDefinition = SettingDefinition<MetabotSettingKey>;
 type MetabotSettingsUpdateBody = {
   provider: MetabotProvider;
   model?: string;
+  "api-base-url"?: string | null;
   "api-key"?: string | null;
 };
 
@@ -171,6 +178,7 @@ async function setup({
   const mergedApiKeyValues: Record<MetabotApiKeyProvider, string | null> = {
     anthropic: "**********45",
     openai: null,
+    "openai-compatible": null,
     openrouter: null,
     ...apiKeyValues,
   };
@@ -221,6 +229,14 @@ async function setup({
     "llm-openai-api-key": createMockSettingDefinition({
       key: "llm-openai-api-key",
       value: mergedApiKeyValues.openai ?? undefined,
+    }),
+    "llm-openai-compatible-api-key": createMockSettingDefinition({
+      key: "llm-openai-compatible-api-key",
+      value: mergedApiKeyValues["openai-compatible"] ?? undefined,
+    }),
+    "llm-openai-compatible-api-base-url": createMockSettingDefinition({
+      key: "llm-openai-compatible-api-base-url",
+      value: undefined,
     }),
     "llm-openrouter-api-key": createMockSettingDefinition({
       key: "llm-openrouter-api-key",
@@ -305,7 +321,9 @@ async function setup({
           ? "llm-anthropic-api-key"
           : body.provider === "openai"
             ? "llm-openai-api-key"
-            : "llm-openrouter-api-key";
+            : body.provider === "openai-compatible"
+              ? "llm-openai-compatible-api-key"
+              : "llm-openrouter-api-key";
       const maskedApiKey = body["api-key"]
         ? `**********${String(body["api-key"]).slice(-2)}`
         : undefined;
@@ -315,6 +333,15 @@ async function setup({
         key: apiKeySettingKey,
         value: maskedApiKey,
       });
+    }
+
+    if ("api-base-url" in body) {
+      settingsDefinitions["llm-openai-compatible-api-base-url"] =
+        createMockSettingDefinition({
+          ...settingsDefinitions["llm-openai-compatible-api-base-url"],
+          key: "llm-openai-compatible-api-base-url",
+          value: body["api-base-url"] ?? undefined,
+        });
     }
 
     if ("model" in body) {
@@ -461,7 +488,7 @@ describe("MetabotSetup", () => {
     expect(anthropicOption).not.toHaveAttribute("aria-disabled", "true");
   });
 
-  it("shows Coming soon for non-Anthropic providers and disables them", async () => {
+  it("keeps unreleased providers disabled while OpenAI Compatible is selectable", async () => {
     await setup({ savedProviderValue: null, isConfigured: false });
 
     await userEvent.click(screen.getByLabelText("Provider"));
@@ -476,7 +503,62 @@ describe("MetabotSetup", () => {
     });
     expect(openrouterOption).toHaveAttribute("data-combobox-disabled");
 
+    const openaiCompatibleOption = await screen.findByRole("option", {
+      name: "OpenAI Compatible",
+    });
+    expect(openaiCompatibleOption).not.toHaveAttribute(
+      "data-combobox-disabled",
+    );
+
     expect(screen.getAllByText("Coming soon")).toHaveLength(2);
+  });
+
+  it("saves OpenAI Compatible endpoint, key, and custom model", async () => {
+    await setup({
+      savedProviderValue: null,
+      isConfigured: false,
+      updateResponse: {
+        value: "openai-compatible/gpt-5-chat",
+        models: [],
+      },
+    });
+
+    await selectProvider("OpenAI Compatible");
+
+    expect(await screen.findByLabelText("API key")).toBeInTheDocument();
+    expect(screen.getByLabelText("Base URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("Model")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+
+    await userEvent.type(screen.getByLabelText("API key"), "azure-test-key");
+    await userEvent.type(
+      screen.getByLabelText("Base URL"),
+      "https://resource.cognitiveservices.azure.com/openai/v1/",
+    );
+    await userEvent.type(screen.getByLabelText("Model"), "gpt-5-chat");
+
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() => {
+      expect(fetchMock.callHistory.called("path:/api/metabot/settings")).toBe(
+        true,
+      );
+    });
+
+    const [request] = fetchMock.callHistory.calls(
+      "path:/api/metabot/settings",
+      { method: "PUT" },
+    );
+
+    expect(request?.options?.body).toBe(
+      JSON.stringify({
+        provider: "openai-compatible",
+        "api-key": "azure-test-key",
+        "api-base-url":
+          "https://resource.cognitiveservices.azure.com/openai/v1/",
+        model: "gpt-5-chat",
+      }),
+    );
   });
 
   it("shows the connected badge with the saved provider and model", async () => {

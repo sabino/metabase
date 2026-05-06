@@ -191,6 +191,7 @@ export type MetabotProvider =
   | "metabase"
   | "anthropic"
   | "openai"
+  | "openai-compatible"
   | "openrouter";
 
 export interface MetabotSettingsResponse {
@@ -206,6 +207,7 @@ export interface MetabotSettingsResponse {
 export interface UpdateMetabotSettingsRequest {
   provider: MetabotProvider;
   model?: string;
+  "api-base-url"?: string | null;
   "api-key"?: string | null;
 }
 

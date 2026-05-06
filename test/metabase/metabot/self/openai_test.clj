@@ -203,3 +203,30 @@
                  clojure.lang.ExceptionInfo
                  #"No OpenAI API key is set"
                  (openai/openai-raw {:input [{:role :user :content "hi"}]})))))))))
+
+(deftest openai-compatible-request-test
+  (testing "Normalizes API roots that already include /v1"
+    (mt/with-temporary-setting-values [llm.settings/llm-openai-compatible-api-key      "custom-key"
+                                       llm.settings/llm-openai-compatible-api-base-url "https://llm.example.com/v1/"]
+      (with-redefs [self.core/sse-reducible identity
+                    http/request            (fn [req] {:body req})]
+        (is (=? {:method  :post
+                 :url     "https://llm.example.com/v1/responses"
+                 :headers {"Authorization" "Bearer custom-key"}
+                 :body    string?}
+                (openai/openai-compatible-raw {:model "custom-model"
+                                               :input [{:role :user :content "hi"}]})))))))
+
+(deftest openai-compatible-azure-auth-test
+  (testing "Sends Azure's api-key header for Azure OpenAI-compatible endpoints"
+    (mt/with-temporary-setting-values [llm.settings/llm-openai-compatible-api-key      "azure-key"
+                                       llm.settings/llm-openai-compatible-api-base-url "https://resource.cognitiveservices.azure.com/openai/v1/"]
+      (with-redefs [self.core/sse-reducible identity
+                    http/request            (fn [req] {:body req})]
+        (is (=? {:method  :post
+                 :url     "https://resource.cognitiveservices.azure.com/openai/v1/responses"
+                 :headers {"Authorization" "Bearer azure-key"
+                           "api-key"       "azure-key"}
+                 :body    string?}
+                (openai/openai-compatible-raw {:model "custom-model"
+                                               :input [{:role :user :content "hi"}]})))))))

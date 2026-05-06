@@ -233,6 +233,7 @@
 (def ^:private metabot-settings-response-schema
   [:map
    [:value [:maybe :string]]
+   [:api-base-url {:optional true} [:maybe :string]]
    [:api-key-error {:optional true} [:maybe :string]]
    [:models [:sequential llm-model-response-schema]]])
 
@@ -240,14 +241,22 @@
   [:map
    [:provider metabot-provider-schema]
    [:model {:optional true} [:maybe :string]]
+   [:api-base-url {:optional true} [:maybe :string]]
    [:api-key {:optional true} [:maybe :string]]])
 
 (defn- provider-api-key-setting-key
   [provider]
   (case provider
-    "anthropic"  :llm-anthropic-api-key
-    "openai"     :llm-openai-api-key
-    "openrouter" :llm-openrouter-api-key))
+    "anthropic"         :llm-anthropic-api-key
+    "openai"            :llm-openai-api-key
+    "openai-compatible" :llm-openai-compatible-api-key
+    "openrouter"        :llm-openrouter-api-key))
+
+(defn- provider-api-base-url-setting-key
+  [provider]
+  (case provider
+    "openai-compatible" :llm-openai-compatible-api-base-url
+    nil))
 
 (defn- non-blank-string
   [value]
@@ -334,34 +343,48 @@
 
 (defn- provider-models-response
   ([provider]
-   (provider-models-response provider nil))
-  ([provider api-key-override]
+   (provider-models-response provider nil nil))
+  ([provider api-key-override api-base-url-override]
    (if (= provider provider-util/metabase-provider-prefix)
      {:models (decorate-provider-models
                provider
                (:models (metabot.self/list-models "anthropic" {:ai-proxy? true})))}
-     (let [effective-api-key (or (non-blank-string api-key-override)
-                                 (non-blank-string
-                                  (metabot.settings/configured-provider-api-key provider)))]
-       (if (and provider effective-api-key)
+     (let [effective-api-key      (or (non-blank-string api-key-override)
+                                      (non-blank-string
+                                       (metabot.settings/configured-provider-api-key provider)))
+           effective-api-base-url (or (non-blank-string api-base-url-override)
+                                      (non-blank-string
+                                       (metabot.settings/configured-provider-api-base-url provider)))]
+       (if (and provider
+                effective-api-key
+                (or (not= provider "openai-compatible")
+                    effective-api-base-url))
          (try
            {:models (decorate-provider-models
                      provider
-                     (:models (metabot.self/list-models provider {:api-key effective-api-key})))}
+                     (:models (metabot.self/list-models provider
+                                                        {:api-key      effective-api-key
+                                                         :api-base-url effective-api-base-url})))}
            (catch clojure.lang.ExceptionInfo e
              (if (invalid-api-key-error? e)
                {:models []
                 :api-key-error (.getMessage e)}
-               (throw e))))
+               (if (= provider "openai-compatible")
+                 {:models []}
+                 (throw e)))))
          {:models []})))))
 
 (defn- settings-response
   ([provider]
-   (settings-response provider nil))
-  ([provider api-key-override]
+   (settings-response provider nil nil))
+  ([provider api-key-override api-base-url-override]
    (merge
     {:value (metabot.settings/llm-metabot-provider)}
-    (provider-models-response provider api-key-override))))
+    (when-let [api-base-url (or (non-blank-string api-base-url-override)
+                                (non-blank-string
+                                 (metabot.settings/configured-provider-api-base-url provider)))]
+      {:api-base-url api-base-url})
+    (provider-models-response provider api-key-override api-base-url-override))))
 
 (defn- current-provider
   []
@@ -395,7 +418,7 @@
    _query-params
    body :- metabot-settings-request-schema]
   (perms/check-has-application-permission :setting)
-  (let [{:keys [provider api-key] request-model :model} body
+  (let [{:keys [provider api-key api-base-url] request-model :model} body
         current-provider (current-setting-provider)
         provider-changed? (not= current-provider provider)
         model (cond
@@ -408,10 +431,13 @@
 
                 :else
                 nil)
-        response (-> (settings-response provider api-key)
+        response (-> (settings-response provider api-key api-base-url)
                      throw-api-key-error!)]
     (when (contains? body :api-key)
       (setting/set! (provider-api-key-setting-key provider) (non-blank-string api-key)))
+    (when-let [api-base-url-setting-key (provider-api-base-url-setting-key provider)]
+      (when (contains? body :api-base-url)
+        (setting/set! api-base-url-setting-key (non-blank-string api-base-url))))
     (when model
       (setting/set! :llm-metabot-provider (str provider "/" model)))
     (assoc response :value (metabot.settings/llm-metabot-provider))))

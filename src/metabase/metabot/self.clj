@@ -28,18 +28,20 @@
 (defn- resolve-adapter [provider]
   ;; a `case` inside of function instead of a map so that with-redefs work well
   (case provider
-    "anthropic"  claude/claude
-    "openai"     openai/openai
-    "openrouter" openrouter/openrouter
+    "anthropic"         claude/claude
+    "openai"            openai/openai
+    "openai-compatible" openai/openai-compatible
+    "openrouter"        openrouter/openrouter
     (throw (ex-info (str "Unknown LLM provider: " provider)
                     {:provider provider}))))
 
 (defn- resolve-model-lister [provider]
   ;; a `case` inside of function instead of a map so that with-redefs work well
   (case provider
-    "anthropic"  claude/list-models
-    "openai"     openai/list-models
-    "openrouter" openrouter/list-models
+    "anthropic"         claude/list-models
+    "openai"            openai/list-models
+    "openai-compatible" openai/list-openai-compatible-models
+    "openrouter"        openrouter/list-models
     (throw (ex-info (str "Unknown LLM provider: " provider)
                     {:provider provider}))))
 

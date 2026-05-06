@@ -529,6 +529,8 @@ interface AdminSettings {
 interface SettingsManagerSettings {
   "bcc-enabled?": boolean;
   "llm-openai-api-key"?: string;
+  "llm-openai-compatible-api-key"?: string | null;
+  "llm-openai-compatible-api-base-url"?: string | null;
   "llm-anthropic-api-key"?: string | null;
   "llm-anthropic-api-base-url"?: string | null;
   "llm-openrouter-api-key"?: string | null;
@@ -745,6 +747,8 @@ export interface EnterpriseSettings extends Settings {
   "no-object-illustration-custom"?: string;
   "landing-page"?: string;
   "llm-openai-api-key"?: string;
+  "llm-openai-compatible-api-key"?: string | null;
+  "llm-openai-compatible-api-base-url"?: string | null;
   "llm-openai-model"?: string;
   "llm-metabot-configured?"?: boolean | null;
   "llm-openrouter-api-key"?: string | null;

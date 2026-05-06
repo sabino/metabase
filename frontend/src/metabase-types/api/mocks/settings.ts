@@ -235,6 +235,8 @@ export const createMockSettings = (
   "disable-cors-on-localhost": false,
   "llm-openai-model": "",
   "llm-openai-api-key": "",
+  "llm-openai-compatible-api-key": null,
+  "llm-openai-compatible-api-base-url": null,
   "llm-anthropic-model": "",
   "email-configured?": false,
   "email-smtp-host": null,

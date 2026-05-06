@@ -20,7 +20,7 @@ type MetabotApiKeyProviderOption = {
   label: string;
   apiKey: {
     placeholder: string;
-    addKeyUrl: string;
+    addKeyUrl?: string;
   };
 };
 
@@ -56,6 +56,13 @@ export function getProviderOptions(
         addKeyUrl: "https://platform.openai.com/api-keys",
       },
     },
+    "openai-compatible": {
+      value: "openai-compatible",
+      label: "OpenAI Compatible",
+      apiKey: {
+        placeholder: "Enter your API key",
+      },
+    },
     openrouter: {
       value: "openrouter",
       label: "OpenRouter",
@@ -85,15 +92,23 @@ export function isApiKeyMetabotProvider(
 }
 
 export function isAvailableProvider(provider: MetabotProvider): boolean {
-  return provider === "anthropic" || provider === "metabase";
+  return (
+    provider === "anthropic" ||
+    provider === "metabase" ||
+    provider === "openai-compatible"
+  );
 }
 
 export const API_KEY_SETTING_BY_PROVIDER: Record<
   MetabotApiKeyProvider,
-  "llm-anthropic-api-key" | "llm-openai-api-key" | "llm-openrouter-api-key"
+  | "llm-anthropic-api-key"
+  | "llm-openai-api-key"
+  | "llm-openai-compatible-api-key"
+  | "llm-openrouter-api-key"
 > = {
   anthropic: "llm-anthropic-api-key",
   openai: "llm-openai-api-key",
+  "openai-compatible": "llm-openai-compatible-api-key",
   openrouter: "llm-openrouter-api-key",
 };
 

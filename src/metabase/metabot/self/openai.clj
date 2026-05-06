@@ -173,18 +173,46 @@
         (tru "OpenAI API error (HTTP {0}): {1}" status error-msg)
         (tru "OpenAI API error (HTTP {0})" status)))))
 
+(defn- normalize-openai-api-base-url
+  "Normalize an OpenAI-compatible base URL so request paths can consistently
+  include `/v1/...`. Accepts either provider roots like `https://api.openai.com`
+  or API roots like `https://example.com/v1`."
+  [base-url]
+  (let [base-url (str/replace (or base-url "") #"/+$" "")]
+    (if (str/ends-with? base-url "/v1")
+      (subs base-url 0 (- (count base-url) 3))
+      base-url)))
+
+(defn- azure-openai-base-url?
+  [base-url]
+  (boolean (when-let [base-url (some-> base-url str/lower-case)]
+             (re-find #"\.(?:cognitiveservices|openai)\.azure\.com" base-url))))
+
+(defn- openai-auth
+  [api-key base-url]
+  (let [base-url (normalize-openai-api-base-url base-url)]
+    {:url     base-url
+     :headers (cond-> {"Authorization" (str "Bearer " api-key)}
+                (azure-openai-base-url? base-url) (assoc "api-key" api-key))}))
+
+(defn- configured-openai-auth
+  [api-key api-base-url]
+  (when-let [api-key (not-empty api-key)]
+    (when-let [api-base-url (not-empty api-base-url)]
+      (openai-auth api-key api-base-url))))
+
 (defn list-models
   "List available OpenAI models.
-  No-arg uses the configured API key. Opts map supports `:api-key` and `:ai-proxy?`."
+  No-arg uses the configured API key. Opts map supports `:api-key`, `:api-base-url` and `:ai-proxy?`."
   ([] (list-models {}))
-  ([{:keys [api-key ai-proxy?]}]
+  ([{:keys [api-key api-base-url ai-proxy?]}]
    (when (and api-key (str/blank? api-key))
      (throw (core/missing-api-key-ex "OpenAI")))
    (try
      (let [auth (core/resolve-auth "openai" "OpenAI"
-                                   (when-let [k (or (not-empty api-key) (not-empty (llm/llm-openai-api-key)))]
-                                     {:url     (llm/llm-openai-api-base-url)
-                                      :headers {"Authorization" (str "Bearer " k)}})
+                                   (configured-openai-auth
+                                    (or (not-empty api-key) (not-empty (llm/llm-openai-api-key)))
+                                    (or (not-empty api-base-url) (llm/llm-openai-api-base-url)))
                                    ai-proxy?)
            res  (core/request auth {:method  :get
                                     :url     "/v1/models"
@@ -196,6 +224,20 @@
                       (reverse (sort-by :created (get-in res [:body :data]))))})
      (catch Exception e
        (core/rethrow-api-error! "openai" openai-errors e)))))
+
+(defn list-openai-compatible-models
+  "List available models from the configured OpenAI-compatible API."
+  ([] (list-openai-compatible-models {}))
+  ([{:keys [api-key api-base-url] :as opts}]
+   (let [api-key      (or (not-empty api-key) (not-empty (llm/llm-openai-compatible-api-key)))
+         api-base-url (or (not-empty api-base-url) (not-empty (llm/llm-openai-compatible-api-base-url)))]
+     (when-not api-base-url
+       (throw (ex-info (tru "No OpenAI-compatible API base URL is set")
+                       {:api-error  true
+                        :error-code :api-base-url-missing})))
+     (list-models (assoc opts
+                         :api-key      api-key
+                         :api-base-url api-base-url)))))
 
 (mu/defn openai-raw
   "Perform a streaming request to OpenAI Responses API."
@@ -223,9 +265,7 @@
     (try
       (let [api-key  (not-empty (llm/llm-openai-api-key))
             auth     (core/resolve-auth "openai" "OpenAI"
-                                        (when api-key
-                                          {:url     (llm/llm-openai-api-base-url)
-                                           :headers {"Authorization" (str "Bearer " api-key)}})
+                                        (configured-openai-auth api-key (llm/llm-openai-api-base-url))
                                         ai-proxy?)
             response (core/request auth
                                    {:method  :post
@@ -245,4 +285,50 @@
   "Call OpenAI API, return AISDK stream."
   [& args]
   (let [raw (apply openai-raw args)]
+    (eduction (openai->aisdk-chunks-xf) raw)))
+
+(mu/defn openai-compatible-raw
+  "Perform a streaming request to an OpenAI-compatible Responses API."
+  [{:keys [model system input tools schema tool_choice temperature max-tokens]} :- core/LLMRequestOpts]
+  (let [api-key      (not-empty (llm/llm-openai-compatible-api-key))
+        api-base-url (not-empty (llm/llm-openai-compatible-api-base-url))
+        _            (when-not api-base-url
+                       (throw (ex-info (tru "No OpenAI-compatible API base URL is set")
+                                       {:api-error  true
+                                        :error-code :api-base-url-missing})))
+        auth         (or (configured-openai-auth api-key api-base-url)
+                         (throw (core/missing-api-key-ex "OpenAI-compatible")))
+        all-tools    (or (when schema
+                           [{:type        "function"
+                             :name        "structured_output"
+                             :description "Output structured data"
+                             :parameters  schema}])
+                         (when (seq tools) (mapv tool->openai tools)))
+        req          (cond-> {:model        model
+                              :stream       true
+                              :store        false
+                              :instructions system
+                              :input        (parts->openai-input input)}
+                       all-tools   (assoc :tool_choice (cond
+                                                         schema      "required"
+                                                         tool_choice tool_choice
+                                                         :else       "auto")
+                                          :tools       all-tools)
+                       temperature (assoc :temperature temperature)
+                       max-tokens  (assoc :max_tokens max-tokens))]
+    (try
+      (let [response (core/request auth
+                                   {:method  :post
+                                    :url     "/v1/responses"
+                                    :as      :stream
+                                    :headers {"Content-Type" "application/json"}
+                                    :body    (json/encode req)})]
+        (core/sse-reducible (:body response)))
+      (catch Exception e
+        (core/rethrow-api-error! "openai-compatible" openai-errors e)))))
+
+(defn openai-compatible
+  "Call an OpenAI-compatible API, return AISDK stream."
+  [& args]
+  (let [raw (apply openai-compatible-raw args)]
     (eduction (openai->aisdk-chunks-xf) raw)))

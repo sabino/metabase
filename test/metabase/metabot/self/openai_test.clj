@@ -90,6 +90,33 @@
                         :completionTokens pos-int?}}]
               (into [] (comp (openai/openai->aisdk-chunks-xf) (self.core/aisdk-xf)) raw-chunks))))))
 
+(deftest ^:parallel openai-reasoning-output-items-are-ignored-test
+  (testing "reasoning models can emit reasoning output items that are not user-visible AISDK parts"
+    (let [raw-chunks [{:type     "response.created"
+                       :response {:id "resp_1" :model "gpt-5.5"}}
+                      {:type "response.output_item.added"
+                       :item {:id "rs_1" :type "reasoning"}}
+                      {:type  "response.reasoning_summary_text.delta"
+                       :delta "internal reasoning"}
+                      {:type "response.output_item.done"
+                       :item {:id "rs_1" :type "reasoning"}}
+                      {:type "response.output_item.added"
+                       :item {:id "msg_1" :type "message"}}
+                      {:type  "response.output_text.delta"
+                       :delta "Done."}
+                      {:type "response.output_item.done"
+                       :item {:id "msg_1" :type "message"}}
+                      {:type     "response.completed"
+                       :response {:id    "resp_1"
+                                  :usage {:input_tokens 4 :output_tokens 3}}}]
+          parts      (into [] (comp (openai/openai->aisdk-chunks-xf) (self.core/aisdk-xf)) raw-chunks)]
+      (is (=? [{:type :start}
+               {:type :text :text "Done."}
+               {:type  :usage
+                :usage {:promptTokens 4 :completionTokens 3}
+                :model "gpt-5.5"}]
+              parts)))))
+
 ;;; ──────────────────────────────────────────────────────────────────
 ;;; Usage normalization tests
 ;;; ──────────────────────────────────────────────────────────────────

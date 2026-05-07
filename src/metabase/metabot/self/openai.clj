@@ -53,15 +53,16 @@
            @current-type (close!)
            true          (rf)))
         ([result {t :type :keys [response item delta error] :as chunk}]
-         (let [middle     (second (str/split t #"\."))
-               chunk-type (case middle
-                            "output_item"             (case (:type item)
-                                                        "message" :text
-                                                        (keyword (:type item)))
-                            "content_part"            :text
-                            "output_text"             :text
-                            "function_call_arguments" :function_call
-                            (keyword middle))
+         (let [middle       (second (str/split t #"\."))
+               chunk-type   (case middle
+                              "output_item"             (case (:type item)
+                                                          "message" :text
+                                                          (keyword (:type item)))
+                              "content_part"            :text
+                              "output_text"             :text
+                              "function_call_arguments" :function_call
+                              (keyword middle))
+               supported?   (#{:text :function_call} chunk-type)
                chunk-id   (or (case chunk-type
                                 ;; chunks that have natural id in API response go here
                                 :function_call (:call_id item)
@@ -75,27 +76,31 @@
                                                       (vreset! model-name (:model response))))
              ;; time to finish previous chunk
              ;; this logic will skip most of the *.done types, but they seem to be always followed by one of those two?
-             (or (= t "response.output_item.done")
+             (or (and (= t "response.output_item.done")
+                      supported?)
                  (and @current-id
+                      supported?
                       (not= chunk-id
                             @current-id)))      (close!)
              ;; start of a new chunk
-             (= t "response.output_item.added") (-> (u/prog1
-                                                      (vreset! current-type chunk-type)
-                                                      (vreset! current-id chunk-id)
-                                                      (vreset! payload
-                                                               (case @current-type
-                                                                 ;; no :type in payloads since we'll use that for finish msg too
-                                                                 :text          {:id chunk-id}
-                                                                 :function_call {:toolCallId chunk-id
-                                                                                 :toolName   (:name item)}
-                                                                 nil)))
-                                                    (rf (merge (case @current-type
-                                                                 :text          {:type :text-start}
-                                                                 :function_call {:type :tool-input-start})
-                                                               @payload)))
+             (and (= t "response.output_item.added")
+                  supported?)                    (-> (u/prog1
+                                                       (vreset! current-type chunk-type)
+                                                       (vreset! current-id chunk-id)
+                                                       (vreset! payload
+                                                                (case @current-type
+                                                                  ;; no :type in payloads since we'll use that for finish msg too
+                                                                  :text          {:id chunk-id}
+                                                                  :function_call {:toolCallId chunk-id
+                                                                                  :toolName   (:name item)})))
+                                                     (rf (merge (case @current-type
+                                                                  :text          {:type :text-start}
+                                                                  :function_call {:type :tool-input-start})
+                                                                @payload)))
              ;; just a middle of a chunk
-             delta                              (rf (case @current-type
+             (and delta
+                  supported?
+                  @current-type)                (rf (case @current-type
                                                       :text          {:type  :text-delta
                                                                       :id    @current-id
                                                                       :delta delta}

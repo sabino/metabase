@@ -7,10 +7,10 @@
 
 (def ^:private valid-embedding-providers
   "The set of valid embedding provider names."
-  #{"ai-service" "openai" "ollama"})
+  #{"ai-service" "openai" "openai-compatible" "ollama"})
 
 (defsetting ee-embedding-provider
-  (deferred-tru "The embedding provider to use (`openai`, `ollama`, or `ai-service`)")
+  (deferred-tru "The embedding provider to use (`openai`, `openai-compatible`, `ollama`, or `ai-service`)")
   :encryption :no
   :visibility :settings-manager
   :default "ai-service"
@@ -51,6 +51,16 @@
   "Get the OpenAI API key from the existing LLM settings."
   []
   (llm-settings/llm-openai-api-key))
+
+(defn openai-compatible-api-base-url
+  "Get the OpenAI-compatible API base URL from the existing LLM settings."
+  []
+  (llm-settings/llm-openai-compatible-api-base-url))
+
+(defn openai-compatible-api-key
+  "Get the OpenAI-compatible API key from the existing LLM settings."
+  []
+  (llm-settings/llm-openai-compatible-api-key))
 
 (defsetting ee-embedding-service-base-url
   (deferred-tru "URL of the OpenAI-compatible embedding service (e.g. a LiteLLM proxy).")

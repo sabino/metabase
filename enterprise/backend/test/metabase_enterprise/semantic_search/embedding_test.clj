@@ -47,6 +47,14 @@
       (is (= {:provider "openai"
               :model-name "text-embedding-3-small"
               :vector-dimensions 1536}
+             (embedding/get-configured-model))))
+
+    (mt/with-temporary-setting-values [ee-embedding-provider "openai-compatible"
+                                       ee-embedding-model "custom-embedding-model"
+                                       ee-embedding-model-dimensions 768]
+      (is (= {:provider "openai-compatible"
+              :model-name "custom-embedding-model"
+              :vector-dimensions 768}
              (embedding/get-configured-model))))))
 
 (deftest test-model-dimensions-with-settings
@@ -72,6 +80,26 @@
              clojure.lang.ExceptionInfo
              #"OpenAI API key not configured"
              (embedding/get-embeddings-batch embedding-model ["test text"])))))))
+
+(deftest test-openai-compatible-provider-validation
+  (let [embedding-model {:provider "openai-compatible"
+                         :model-name "custom-embedding-model"
+                         :vector-dimensions 768}]
+    (testing "OpenAI-compatible provider throws when base URL is not configured"
+      (mt/with-temporary-setting-values [llm-openai-compatible-api-base-url nil
+                                         llm-openai-compatible-api-key "mock-key"]
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo
+             #"OpenAI-compatible API base URL not configured"
+             (embedding/get-embedding embedding-model "test text")))))
+
+    (testing "OpenAI-compatible provider throws when API key is not configured"
+      (mt/with-temporary-setting-values [llm-openai-compatible-api-base-url "http://localhost:1234"
+                                         llm-openai-compatible-api-key nil]
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo
+             #"OpenAI-compatible API key not configured"
+             (embedding/get-embedding embedding-model "test text")))))))
 
 (deftest test-token-counting
   (testing "count-tokens returns reasonable counts for text"
@@ -146,6 +174,14 @@
                          {:embedding base64-str2}
                          {:embedding base64-str3}])))))
 
+    (testing "extracts JSON vector embeddings correctly"
+      (let [embedding1 [1.0 2.5 -0.5 3.14159]
+            embedding2 [-1.0 -2.0 -3.0]]
+        (is (=? [#(float-vectors-approx= embedding1 %)
+                 #(float-vectors-approx= embedding2 %)]
+                (decode [{:embedding embedding1}
+                         {:embedding embedding2}])))))
+
     (testing "edge cases that return empty results"
       (testing "handles empty data array"
         (is (= [] (decode [])))
@@ -174,9 +210,11 @@
           (is (thrown? Exception (decode [{:embedding invalid-base64}]))))))))
 
 (deftest test-get-embedding
-  (mt/with-temporary-setting-values [llm-openai-api-key              "sk-mock-openai-api-key"
-                                     ee-embedding-service-base-url  "http://mock-embedding-service"
-                                     ee-embedding-service-api-key   "mock-embedding-service-key"]
+  (mt/with-temporary-setting-values [llm-openai-api-key                 "sk-mock-openai-api-key"
+                                     llm-openai-compatible-api-base-url "http://mock-openai-compatible-service"
+                                     llm-openai-compatible-api-key      "mock-openai-compatible-key"
+                                     ee-embedding-service-base-url      "http://mock-embedding-service"
+                                     ee-embedding-service-api-key       "mock-embedding-service-key"]
     (let [mock-embedding  [1.0 2.0 3.0 4.0]
           openai-response {:data  [{:object    "embedding"
                                     :embedding (encode-floats-to-base64 mock-embedding)
@@ -191,6 +229,14 @@
                 :counts-tokens? true}
                {:provider       "ai-service"
                 :mock-response  openai-response
+                :counts-tokens? true}
+               {:provider       "openai-compatible"
+                :mock-response  {:data  [{:object    "embedding"
+                                          :embedding mock-embedding
+                                          :index     0}]
+                                 :model "some-model"
+                                 :usage {:prompt_tokens 1
+                                         :total_tokens  1}}
                 :counts-tokens? true}
                {:provider       "ollama"
                 :mock-response  {:embedding mock-embedding}
@@ -223,6 +269,36 @@
                 (is (= (get-in mock-response [:usage :total_tokens])
                        (-> tokens-calls first second second)))
                 (is (= 2 (t2/count :model/SemanticSearchTokenTracking)))))))))))
+
+(deftest test-openai-compatible-embedding-request
+  (testing "OpenAI-compatible provider normalizes /v1 URLs, sends Azure API key header, and accepts JSON vectors"
+    (mt/with-temporary-setting-values [llm-openai-compatible-api-base-url "https://example.openai.azure.com/v1/"
+                                       llm-openai-compatible-api-key      "mock-azure-key"]
+      (let [request (atom nil)]
+        (mt/with-dynamic-fn-redefs [http/post (fn [url opts]
+                                                (reset! request {:url url :opts opts})
+                                                {:status  200
+                                                 :headers {"Content-Type" "application/json"}
+                                                 :body    (json/encode
+                                                           {:data  [{:object "embedding"
+                                                                     :embedding [1.0 2.0 3.0]
+                                                                     :index 0}]
+                                                            :model "custom-embedding-model"
+                                                            :usage {:prompt_tokens 2
+                                                                    :total_tokens  2}})})]
+          (is (= [[1.0 2.0 3.0]]
+                 (mapv vec (embedding/get-embeddings-batch {:provider "openai-compatible"
+                                                            :model-name "custom-embedding-model"
+                                                            :vector-dimensions 3}
+                                                           ["hello"]))))
+          (is (= "https://example.openai.azure.com/v1/embeddings" (:url @request)))
+          (is (= {"Content-Type"  "application/json"
+                  "Authorization" "Bearer mock-azure-key"
+                  "api-key"       "mock-azure-key"}
+                 (get-in @request [:opts :headers])))
+          (is (= {:model "custom-embedding-model"
+                  :input ["hello"]}
+                 (json/decode (get-in @request [:opts :body]) true))))))))
 
 (deftest test-embedding-service-validation
   (testing "ai-service throws when base URL not configured"
@@ -278,7 +354,7 @@
 (deftest token-tracking-write-test
   (mt/with-premium-features #{:semantic-search}
     (when (string? (not-empty (:mb-pgvector-db-url env/env)))
-      (doseq [provider ["openai" "ai-service"]]
+      (doseq [provider ["openai" "ai-service" "openai-compatible"]]
         (semantic.tu/with-test-db! {:mode :blank}
           (let [mock-embedding (repeat 1024 1.0)
                 mock-response {:data [{:object "embedding"
@@ -287,12 +363,14 @@
                                :model "some-model"
                                :usage {:prompt_tokens 1
                                        :total_tokens 13}}]
-            (with-redefs [semantic.settings/ee-embedding-provider           (constantly provider)
-                          semantic.settings/ee-embedding-model              (constantly "mock-model")
-                          semantic.settings/openai-api-key                  (constantly "xyz")
-                          semantic.settings/openai-api-base-url             (constantly "xyz")
-                          semantic.settings/ee-embedding-service-base-url   (constantly "http://mock-embedding-service")
-                          semantic.settings/ee-embedding-service-api-key    (constantly "mock-key")
+            (with-redefs [semantic.settings/ee-embedding-provider              (constantly provider)
+                          semantic.settings/ee-embedding-model                 (constantly "mock-model")
+                          semantic.settings/openai-api-key                     (constantly "xyz")
+                          semantic.settings/openai-api-base-url                (constantly "xyz")
+                          semantic.settings/openai-compatible-api-key          (constantly "xyz")
+                          semantic.settings/openai-compatible-api-base-url     (constantly "http://mock-openai-compatible-service")
+                          semantic.settings/ee-embedding-service-base-url      (constantly "http://mock-embedding-service")
+                          semantic.settings/ee-embedding-service-api-key       (constantly "mock-key")
                           http/post (fn post-mock [_url & _options]
                                       {:status 200
                                        :headers {"Content-Type" "application/json"}

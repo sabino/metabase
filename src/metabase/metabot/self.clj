@@ -153,12 +153,15 @@
     - `:model`      — the model (e.g. `openrouter/anthropic/claude-haiku-4-5`)
     - `:tag`        — the specific purpose for which the tokens were used (e.g. 'agent', 'sql-fixing')
 
+   Usage log only:
+    - `:usage-source` — source for the persisted AI usage log when it differs from the Snowplow source
+
    Snowplow only:
     - `:request-id` — UUID string for this request
     - `:session-id` — conversation UUID string
     - `:source`     — the source of the request (e.g., 'metabot_agent', 'document_generate_content').
                       Indicates which API endpoint or workflow initiated the LLM call."
-  [{:keys [model profile-id request-id session-id source tag ai-proxy?]}]
+  [{:keys [model profile-id request-id session-id source usage-source tag ai-proxy?]}]
   (let [start-ms      (u/start-timer)]
     (map (fn [part]
            (when (= (:type part) :usage)
@@ -183,7 +186,7 @@
                  :source              source
                  :tag                 tag})
                (usage/log-ai-usage!
-                {:source            (or source tag "unknown")
+                {:source            (or usage-source source tag "unknown")
                  :model             model
                  :prompt-tokens     prompt
                  :completion-tokens completion
@@ -311,6 +314,7 @@
 
   Args:
     model         - Model identifier (e.g. \"openrouter/anthropic/claude-haiku-4-5\")
+    system-msg    - Optional system prompt
     messages      - Sequence of Chat Completions message maps
                     (e.g. [{:role \"user\" :content \"...\"}])
     json-schema   - JSON Schema map for the expected response shape
@@ -319,34 +323,37 @@
     tracking-opts - See [[report-token-usage-xf]] for fields
 
   Returns the parsed JSON map from the forced tool call."
-  [provider-and-model messages json-schema temperature max-tokens tracking-opts]
-  (let [{:keys [provider stream-fn model ai-proxy?]} (parse-provider-model provider-and-model)
-        _ (log/info "Calling LLM (structured)" {:provider provider
-                                                :model model
-                                                :msg-count (count messages)
-                                                :ai-proxy? ai-proxy?})
-        tracking-opts  (assoc tracking-opts :model provider-and-model :ai-proxy? ai-proxy?)
-        streaming-opts {:model       model
-                        :input       messages
-                        :schema      json-schema
-                        :temperature temperature
-                        :max-tokens  max-tokens
-                        :ai-proxy?   ai-proxy?}]
-    (with-span :info {:name      :metabot.agent/call-llm-structured
-                      :model     model
-                      :msg-count (count messages)}
-      (with-retries
-        tracking-opts
-        (fn []
-          (let [parts (into []
-                            (comp (core/aisdk-xf)
-                                  (report-aisdk-errors-xf tracking-opts)
-                                  (report-token-usage-xf tracking-opts))
-                            (stream-fn streaming-opts))
-                result (some (fn [{:keys [type arguments]}]
-                               (when (= type :tool-input)
-                                 arguments))
-                             parts)]
-            (or result
-                (throw (ex-info "LLM returned no tool call in structured response"
-                                {:parts parts})))))))))
+  ([provider-and-model messages json-schema temperature max-tokens tracking-opts]
+   (call-llm-structured provider-and-model nil messages json-schema temperature max-tokens tracking-opts))
+  ([provider-and-model system-msg messages json-schema temperature max-tokens tracking-opts]
+   (let [{:keys [provider stream-fn model ai-proxy?]} (parse-provider-model provider-and-model)
+         _ (log/info "Calling LLM (structured)" {:provider provider
+                                                 :model model
+                                                 :msg-count (count messages)
+                                                 :ai-proxy? ai-proxy?})
+         tracking-opts  (assoc tracking-opts :model provider-and-model :ai-proxy? ai-proxy?)
+         streaming-opts (cond-> {:model       model
+                                 :input       messages
+                                 :schema      json-schema
+                                 :temperature temperature
+                                 :max-tokens  max-tokens
+                                 :ai-proxy?   ai-proxy?}
+                          system-msg (assoc :system system-msg))]
+     (with-span :info {:name      :metabot.agent/call-llm-structured
+                       :model     model
+                       :msg-count (count messages)}
+       (with-retries
+         tracking-opts
+         (fn []
+           (let [parts (into []
+                             (comp (core/aisdk-xf)
+                                   (report-aisdk-errors-xf tracking-opts)
+                                   (report-token-usage-xf tracking-opts))
+                             (stream-fn streaming-opts))
+                 result (some (fn [{:keys [type arguments]}]
+                                (when (= type :tool-input)
+                                  arguments))
+                              parts)]
+             (or result
+                 (throw (ex-info "LLM returned no tool call in structured response"
+                                 {:parts parts}))))))))))

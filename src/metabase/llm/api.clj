@@ -3,14 +3,12 @@
   (:require
    [clojure.java.io :as io]
    [clojure.set :as set]
-   [metabase.analytics.core :as analytics]
    [metabase.analytics.snowplow :as snowplow]
    [metabase.api.common :as api]
    [metabase.api.macros :as api.macros]
    [metabase.api.routes.common :refer [+auth]]
    [metabase.api.util.handlers :as handlers]
    [metabase.driver :as driver]
-   [metabase.llm.anthropic :as llm.anthropic]
    [metabase.llm.context :as llm.context]
    [metabase.llm.settings :as llm.settings]
    [metabase.metabot.core :as metabot]
@@ -86,6 +84,16 @@
                           :duration_ms  (some-> duration-ms long)
                           :result       result}
                          api/*current-user-id*))
+
+(def ^:private sql-generation-output-schema
+  "JSON schema for provider-neutral SQL generation responses."
+  {:type                 "object"
+   :additionalProperties false
+   :properties           {:sql         {:type        "string"
+                                        :description "The generated SQL query"}
+                          :explanation {:type        "string"
+                                        :description "Brief explanation of the query"}}
+   :required             ["sql"]})
 
 (api.macros/defendpoint :get "/list-models"
   :- [:map [:models [:sequential [:map
@@ -180,7 +188,7 @@
   "Generate SQL from a natural language prompt.
 
    Requires:
-   - LLM to be configured (Anthropic API key set in admin settings)
+   - LLM to be configured for the selected provider in admin settings
    - At least one table reference (explicit @mention or implicit from source_sql)
    - A database_id parameter
 
@@ -196,8 +204,8 @@
                            [:model :string]
                            [:id pos-int?]]]]]
    request]
-  (when-not (llm.settings/llm-anthropic-api-key)
-    (throw (ex-info (tru "LLM SQL generation is not configured. Please set an Anthropic API key in admin settings.")
+  (when-not (metabot.settings/llm-metabot-configured?)
+    (throw (ex-info (tru "LLM SQL generation is not configured. Please configure the selected provider in admin settings.")
                     {:status-code 403})))
   (when-let [limit-msg (metabot/check-usage-limits!)]
     (throw (ex-info limit-msg {:status-code 429})))
@@ -234,28 +242,18 @@
                                                          :source-sql           source_sql})
               start-timer          (u/start-timer)]
           (try
-            (let [{:keys [result usage duration-ms]} (llm.anthropic/chat-completion
-                                                      {:system   system-prompt
-                                                       :messages [{:role "user" :content prompt}]})]
-              (analytics/track-token-usage!
-               {:snowplow            true
-                :prometheus          true
-                :user-id             api/*current-user-id*
-                :request-id          (analytics/uuid->ai-service-hex-uuid (random-uuid))
-                :model-id            (:model usage)
-                :prompt-tokens       (:prompt usage)
-                :completion-tokens   (:completion usage)
-                :total-tokens        (+ (:prompt usage) (:completion usage))
-                :estimated-costs-usd 0.0
-                :duration-ms         (some-> duration-ms long)
-                ;; for some reason, :source convention is snake_case and :tag is (mostly) kebab
-                :source              "oss_metabot"
-                :tag                 "oss-sqlgen"})
-              (metabot/log-ai-usage!
-               {:source             "sql-gen"
-                :model              (:model usage)
-                :prompt-tokens      (:prompt usage)
-                :completion-tokens  (:completion usage)})
+            (let [result (metabot.self/call-llm-structured
+                          (metabot.settings/llm-metabot-provider)
+                          system-prompt
+                          [{:role "user" :content prompt}]
+                          sql-generation-output-schema
+                          nil
+                          (llm.settings/llm-max-tokens)
+                          {:request-id (str (random-uuid))
+                           ;; for some reason, :source convention is snake_case and :tag is (mostly) kebab
+                           :source       "oss_metabot"
+                           :usage-source "sql-gen"
+                           :tag          "oss-sqlgen"})]
               (track-sqlgen-event!
                {:duration-ms (u/since-ms start-timer)
                 :result "success"

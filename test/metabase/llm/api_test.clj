@@ -4,12 +4,12 @@
    [clojure.string :as str]
    [clojure.test :refer :all]
    [metabase.analytics.snowplow-test :as snowplow-test]
-   [metabase.llm.anthropic :as llm.anthropic]
    [metabase.llm.api :as api]
    [metabase.llm.context :as llm.context]
-   [metabase.llm.settings :as llm.settings]
    [metabase.metabot.self :as metabot.self]
+   [metabase.metabot.self.openrouter :as openrouter]
    [metabase.metabot.settings :as metabot.settings]
+   [metabase.metabot.test-util :as metabot.tu]
    [metabase.test :as mt]))
 
 (set! *warn-on-reflection* true)
@@ -128,14 +128,14 @@
 (deftest generate-sql-error-handling-test
   (mt/with-temp [:model/Database db {:engine :postgres}]
     (testing "403 when LLM not configured"
-      (with-redefs [llm.settings/llm-anthropic-api-key (constantly nil)]
+      (with-redefs [metabot.settings/llm-metabot-configured? (constantly false)]
         (let [response (mt/user-http-request :rasta :post 403 "llm/generate-sql"
                                              {:prompt "test"
                                               :database_id (:id db)})]
           (is (str/includes? (str response) "not configured")))))
 
     (testing "400 when no tables found"
-      (with-redefs [llm.settings/llm-anthropic-api-key (constantly "sk-ant-test")]
+      (with-redefs [metabot.settings/llm-metabot-configured? (constantly true)]
         (let [response (mt/user-http-request :rasta :post 400 "llm/generate-sql"
                                              {:prompt "no table mentions here"
                                               :database_id (:id db)})]
@@ -221,14 +221,19 @@
                    :model/Table table {:db_id (:id db) :name "users" :schema "public"}
                    :model/Field _ {:table_id (:id table) :name "id" :base_type :type/Integer}
                    :model/Field _ {:table_id (:id table) :name "name" :base_type :type/Text}]
-      (let [mock-chat-response {:result      {:sql "SELECT * FROM users"}
-                                :usage       {:model      "claude-sonnet-4-5-20250929"
-                                              :prompt     1000
-                                              :completion 200}
-                                :duration-ms 500}]
+      (let [captured-opts (atom nil)
+            mock-response (metabot.tu/mock-llm-response
+                           [{:type :start :id "msg-1"}
+                            {:type :tool-input :id "call-1" :function "structured_output"
+                             :arguments {:sql "SELECT * FROM users"}}
+                            {:type :usage :usage {:promptTokens 1000 :completionTokens 200}
+                             :model "test-model" :id "msg-1"}])]
         (snowplow-test/with-fake-snowplow-collector
-          (with-redefs [llm.settings/llm-anthropic-api-key (constantly "sk-ant-test")
-                        llm.anthropic/chat-completion       (constantly mock-chat-response)]
+          (with-redefs [metabot.settings/llm-metabot-configured? (constantly true)
+                        metabot.settings/llm-metabot-provider    (constantly "openrouter/test-model")
+                        openrouter/openrouter                    (fn [opts]
+                                                                   (reset! captured-opts opts)
+                                                                   mock-response)]
             (let [response      (mt/user-http-request :rasta :post 200 "llm/generate-sql"
                                                       {:prompt              "get all users"
                                                        :database_id         (:id db)
@@ -237,13 +242,20 @@
                   token-events  (filter token-usage-event? events)
                   simple-events (filter simple-event? events)]
               (is (= "SELECT * FROM users" (:sql response)))
+              (testing "provider-neutral structured call"
+                (is (= "test-model" (:model @captured-opts)))
+                (is (string? (:system @captured-opts)))
+                (is (= [{:role "user" :content "get all users"}]
+                       (:input @captured-opts)))
+                (is (=? {:required ["sql"]}
+                        (:schema @captured-opts))))
               (testing "token_usage event"
-                (is (=? [{:data {"model_id"            "claude-sonnet-4-5-20250929"
+                (is (=? [{:data {"model_id"            "openrouter/test-model"
                                  "prompt_tokens"       1000
                                  "completion_tokens"   200
                                  "total_tokens"        1200
                                  "estimated_costs_usd" 0.0
-                                 "duration_ms"         500
+                                 "duration_ms"         int?
                                  "source"              "oss_metabot"
                                  "tag"                 "oss-sqlgen"}}]
                         token-events)))
@@ -260,8 +272,9 @@
                    :model/Table table {:db_id (:id db) :name "users" :schema "public"}
                    :model/Field _ {:table_id (:id table) :name "id" :base_type :type/Integer}]
       (snowplow-test/with-fake-snowplow-collector
-        (with-redefs [llm.settings/llm-anthropic-api-key (constantly "sk-ant-test")
-                      llm.anthropic/chat-completion       (fn [_] (throw (Exception. "API error")))]
+        (with-redefs [metabot.settings/llm-metabot-configured? (constantly true)
+                      metabot.settings/llm-metabot-provider    (constantly "openrouter/test-model")
+                      openrouter/openrouter                    (fn [_] (throw (Exception. "API error")))]
           (mt/user-http-request :rasta :post 500 "llm/generate-sql"
                                 {:prompt              "get all users"
                                  :database_id         (:id db)

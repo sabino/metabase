@@ -3,7 +3,10 @@ import { t } from "ttag";
 import _ from "underscore";
 
 import { SettingHeader } from "metabase/admin/settings/components/SettingHeader";
-import { BasicAdminSettingInput } from "metabase/admin/settings/components/widgets/AdminSettingInput";
+import {
+  AdminSettingInput,
+  BasicAdminSettingInput,
+} from "metabase/admin/settings/components/widgets/AdminSettingInput";
 import { UpsellSemanticSearchPill } from "metabase/admin/upsells/UpsellSemanticSearch";
 import { getErrorMessage, useAdminSetting } from "metabase/api/utils";
 import { getPlan, isProPlan } from "metabase/common/utils/plan";
@@ -12,6 +15,7 @@ import { useSelector } from "metabase/redux";
 import { getSetting } from "metabase/selectors/settings";
 import { Box, Progress, Stack, Text, Tooltip } from "metabase/ui";
 import { useGetSemanticSearchStatusQuery } from "metabase-enterprise/api/search";
+import type { SemanticEmbeddingProvider } from "metabase-types/api";
 
 function useLatch(bool: boolean) {
   const [hasSeenTrue, setHasSeenTrue] = useState(bool);
@@ -25,6 +29,69 @@ function useLatch(bool: boolean) {
   return hasSeenTrue;
 }
 
+function EmbeddingProviderSettings({
+  provider,
+}: {
+  provider: SemanticEmbeddingProvider | null | undefined;
+}) {
+  if (provider === "openai-compatible") {
+    return (
+      <>
+        <AdminSettingInput
+          name="llm-openai-compatible-api-base-url"
+          title={t`OpenAI-compatible base URL`}
+          description={t`Base URL for a custom OpenAI-compatible API, such as an Azure OpenAI resource or a self-hosted gateway.`}
+          placeholder="https://example.com/v1"
+          inputType="text"
+        />
+        <AdminSettingInput
+          name="llm-openai-compatible-api-key"
+          title={t`OpenAI-compatible API key`}
+          inputType="password"
+        />
+      </>
+    );
+  }
+
+  if (provider === "openai") {
+    return (
+      <>
+        <AdminSettingInput
+          name="llm-openai-api-base-url"
+          title={t`OpenAI base URL`}
+          placeholder="https://api.openai.com"
+          inputType="text"
+        />
+        <AdminSettingInput
+          name="llm-openai-api-key"
+          title={t`OpenAI API key`}
+          inputType="password"
+        />
+      </>
+    );
+  }
+
+  if (provider === "ai-service") {
+    return (
+      <>
+        <AdminSettingInput
+          name="ee-embedding-service-base-url"
+          title={t`Embedding service base URL`}
+          placeholder="https://example.com"
+          inputType="text"
+        />
+        <AdminSettingInput
+          name="ee-embedding-service-api-key"
+          title={t`Embedding service API key`}
+          inputType="password"
+        />
+      </>
+    );
+  }
+
+  return null;
+}
+
 export function SearchSettingsWidget({
   statusPollingInterval = 5000,
 }: SearchSettingsWidgetProps) {
@@ -35,6 +102,16 @@ export function SearchSettingsWidget({
 
   const { value } = useAdminSetting("search-engine");
   const semanticSearchEnabled = value === "semantic";
+  const { value: embeddingProvider } = useAdminSetting("ee-embedding-provider");
+  const embeddingProviderOptions: {
+    label: string;
+    value: SemanticEmbeddingProvider;
+  }[] = [
+    { label: t`OpenAI-compatible`, value: "openai-compatible" },
+    { label: t`OpenAI`, value: "openai" },
+    { label: t`Embedding service`, value: "ai-service" },
+    { label: t`Ollama`, value: "ollama" },
+  ];
 
   const [hasFinishedIndexing, setHasFinishedIndexing] = useState(false);
   const response = useGetSemanticSearchStatusQuery(undefined, {
@@ -115,6 +192,29 @@ export function SearchSettingsWidget({
               </Text>
             </Stack>
           )}
+
+          <Stack gap="md" maw="38rem" mt="md">
+            <AdminSettingInput
+              name="ee-embedding-provider"
+              title={t`Embedding provider`}
+              description={t`Provider used to generate vectors for semantic search indexing and query matching.`}
+              inputType="select"
+              options={embeddingProviderOptions}
+            />
+            <AdminSettingInput
+              name="ee-embedding-model"
+              title={t`Embedding model`}
+              inputType="text"
+            />
+            <AdminSettingInput
+              name="ee-embedding-model-dimensions"
+              title={t`Embedding dimensions`}
+              inputType="number"
+            />
+            <EmbeddingProviderSettings
+              provider={embeddingProvider as SemanticEmbeddingProvider | null}
+            />
+          </Stack>
         </>
       )}
     </Stack>

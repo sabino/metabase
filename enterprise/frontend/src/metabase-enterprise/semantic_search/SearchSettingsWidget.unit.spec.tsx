@@ -11,7 +11,11 @@ import {
   createMockState,
 } from "metabase/redux/store/mocks";
 import type {
+  EnterpriseSettingKey,
+  EnterpriseSettingValue,
   SearchEngineSettingValue,
+  SemanticEmbeddingProvider,
+  SettingDefinition,
   TokenFeatures,
 } from "metabase-types/api";
 import {
@@ -27,11 +31,24 @@ const defaultMockSearchStatus = {
   total_est: 100,
 };
 
+const settingDefinition = <Key extends EnterpriseSettingKey>(
+  key: Key,
+  value: EnterpriseSettingValue<Key>,
+  description = `${key} setting`,
+): SettingDefinition<Key> => ({
+  key,
+  value,
+  is_env_setting: false,
+  description,
+  env_name: `MB_${key.toUpperCase().replaceAll("-", "_")}`,
+});
+
 const setup = async (
   searchEngine: SearchEngineSettingValue,
   plan: "pro" | "starter",
   searchStatusData = defaultMockSearchStatus,
   statusPollingInterval?: number,
+  embeddingProvider: SemanticEmbeddingProvider = "openai-compatible",
 ) => {
   const tokenFeatures: Partial<TokenFeatures> = match(plan)
     .with("pro", () => ({
@@ -46,17 +63,28 @@ const setup = async (
   const settings = createMockSettings({
     "search-engine": searchEngine,
     "token-features": createMockTokenFeatures(tokenFeatures),
+    "ee-embedding-provider": embeddingProvider,
+    "ee-embedding-model": "custom-embedding-model",
+    "ee-embedding-model-dimensions": 768,
+    "llm-openai-compatible-api-base-url": "https://example.openai.azure.com/v1",
+    "llm-openai-compatible-api-key": null,
   });
 
   setupPropertiesEndpoints(settings);
   setupSettingsEndpoints([
-    {
-      key: "search-engine",
-      value: searchEngine,
-      is_env_setting: false,
-      description: "Search engine to use",
-      env_name: "METABASE_SEARCH_ENGINE",
-    },
+    settingDefinition("search-engine", searchEngine, "Search engine to use"),
+    settingDefinition("ee-embedding-provider", embeddingProvider),
+    settingDefinition("ee-embedding-model", "custom-embedding-model"),
+    settingDefinition("ee-embedding-model-dimensions", 768),
+    settingDefinition(
+      "llm-openai-compatible-api-base-url",
+      "https://example.openai.azure.com/v1",
+    ),
+    settingDefinition("llm-openai-compatible-api-key", null),
+    settingDefinition("llm-openai-api-base-url", "https://api.openai.com"),
+    settingDefinition("llm-openai-api-key", null),
+    settingDefinition("ee-embedding-service-base-url", null),
+    settingDefinition("ee-embedding-service-api-key", null),
   ]);
 
   // Mock the search status API
@@ -102,6 +130,38 @@ describe("SearchSettingsWidget", () => {
     ).not.toBeInTheDocument();
     expect(await toggle()).toBeDisabled();
     expect(await toggle()).toBeChecked();
+  });
+
+  it("should display embedding provider settings for pro plans", async () => {
+    await setup("semantic", "pro");
+
+    expect(
+      await screen.findByLabelText("Embedding provider"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Embedding model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Embedding dimensions")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("OpenAI-compatible base URL"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("OpenAI-compatible API key"),
+    ).toBeInTheDocument();
+  });
+
+  it("should display provider-specific settings for the official OpenAI provider", async () => {
+    await setup(
+      "semantic",
+      "pro",
+      defaultMockSearchStatus,
+      undefined,
+      "openai",
+    );
+
+    expect(await screen.findByLabelText("OpenAI base URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("OpenAI API key")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("OpenAI-compatible base URL"),
+    ).not.toBeInTheDocument();
   });
 
   it("should show progress when indexing is in progress", async () => {

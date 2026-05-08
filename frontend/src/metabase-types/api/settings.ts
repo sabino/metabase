@@ -528,7 +528,13 @@ interface AdminSettings {
 }
 interface SettingsManagerSettings {
   "bcc-enabled?": boolean;
-  "llm-openai-api-key"?: string;
+  "ee-embedding-provider"?: SemanticEmbeddingProvider | null;
+  "ee-embedding-model"?: string | null;
+  "ee-embedding-model-dimensions"?: number | null;
+  "ee-embedding-service-base-url"?: string | null;
+  "ee-embedding-service-api-key"?: string | null;
+  "llm-openai-api-base-url"?: string | null;
+  "llm-openai-api-key"?: string | null;
   "llm-openai-compatible-api-key"?: string | null;
   "llm-openai-compatible-api-base-url"?: string | null;
   "llm-anthropic-api-key"?: string | null;
@@ -712,6 +718,11 @@ export type IllustrationSettingValue = "default" | "none" | "custom";
 export type TimeoutValue = { amount: number; unit: string };
 
 export type SearchEngineSettingValue = "semantic" | "appdb" | "in-place";
+export type SemanticEmbeddingProvider =
+  | "ai-service"
+  | "openai"
+  | "openai-compatible"
+  | "ollama";
 
 export type DatabaseReplicationConnections = Record<
   DatabaseId,
@@ -746,7 +757,8 @@ export interface EnterpriseSettings extends Settings {
   "no-object-illustration"?: IllustrationSettingValue;
   "no-object-illustration-custom"?: string;
   "landing-page"?: string;
-  "llm-openai-api-key"?: string;
+  "llm-openai-api-base-url"?: string | null;
+  "llm-openai-api-key"?: string | null;
   "llm-openai-compatible-api-key"?: string | null;
   "llm-openai-compatible-api-base-url"?: string | null;
   "llm-openai-model"?: string;
